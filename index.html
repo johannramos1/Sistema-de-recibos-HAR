@@ -94,7 +94,8 @@ label{display:block;font-size:11px;font-weight:bold;color:#555;margin:9px 0 3px}
 .pin-label{font-size:12px;color:#555;min-width:100px}
 .pin-dots{font-family:monospace;background:#e8e8f0;padding:4px 12px;border-radius:4px;letter-spacing:3px;font-size:14px;cursor:pointer;user-select:none;border:1px solid #ccc}
 /* RECIBO */
-.recibo-doc{background:#fff;padding:30px 35px;font-family:Arial,sans-serif;font-size:13px;color:#111;border:1px solid #ccc;border-radius:6px;margin-top:12px;max-width:680px}
+.recibo-doc{background:#fff;padding:30px 35px;font-family:Arial,sans-serif;font-size:13px;color:#111;border:1px solid #ccc;border-radius:6px;margin-top:12px;max-width:680px;display:flex;flex-direction:column;min-height:500px}
+.rec-cuerpo-wrap{flex:1}
 .rec-head{display:flex;justify-content:space-between;align-items:center;padding-bottom:12px;margin-bottom:8px;border-bottom:3px solid #b8860b}
 .rec-head-left{display:flex;align-items:center;gap:14px}
 .rec-logo{width:80px;height:auto}
@@ -113,10 +114,21 @@ label{display:block;font-size:11px;font-weight:bold;color:#555;margin:9px 0 3px}
 .rec-firma-cargo{font-size:11px;color:#555;margin-top:1px}
 .rec-pie{margin-top:18px;border-top:1px solid #ccc;padding-top:8px;font-size:10px;color:#777;text-align:center;line-height:1.7}
 @media print{
+  @page{
+    size:A4 portrait;
+    margin:0;
+  }
   body{background:#fff;padding:0;margin:0}
   #app > *:not(#print-area){display:none!important}
-  #print-area{display:block!important}
-  .recibo-doc{border:none;padding:20px 25px;max-width:100%;border-radius:0}
+  #print-area{display:block!important;margin:0;padding:0}
+  .recibo-doc{
+    border:none;border-radius:0;
+    width:210mm;min-height:297mm;max-width:210mm;
+    padding:18mm 20mm 12mm 20mm;
+    margin:0;
+    display:flex;flex-direction:column;
+  }
+  .rec-cuerpo-wrap{flex:1}
   #print-area *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
 </style>
@@ -812,7 +824,7 @@ function buildRecibo(d){
       <div class="rec-head-right">${getFechaTexto(d.fecha)}</div>
     </div>
     <div class="rec-titulo">CERTIFICADO DE PAGO &nbsp;–&nbsp; ${d.consecutivo}</div>
-    <div class="rec-cuerpo">
+    <div class="rec-cuerpo-wrap"><div class="rec-cuerpo">
       Que el señor <strong>${d.nombre}</strong>, identificado con la cédula de ciudadanía número
       <strong>${d.cedula}</strong>, ${cuerpoPagos}, como abono a la obra contratada
       <strong>${d.obra}</strong>, en la dirección <strong>${d.dir}</strong>,
@@ -820,6 +832,8 @@ function buildRecibo(d){
       <strong>($${fmtNum(d.saldo_resultante)}=) ${d.saldoLetras}</strong>.
     </div>
     ${adHTML}
+    </div></div>
+    <div>
     <p style="margin-top:12px">Cordialmente,</p>
     <div class="rec-firma-section"><div class="rec-firma-block">
       <img src="${FIRMA_B64}" class="rec-firma-img">
@@ -829,6 +843,7 @@ function buildRecibo(d){
       <div class="rec-firma-cargo">Gerente · H.A.R Construcciones y Reformas · NIT. 94.154.479-7</div>
     </div></div>
     <div class="rec-pie">Barrio Ciudad Campestre, casa E11 – Tuluá, Valle Del Cauca &nbsp;·&nbsp; Tel: 317-851-9215<br>Hazelram683@gmail.com &nbsp;·&nbsp; Facebook: H A R Construcciones y Reformas &nbsp;·&nbsp; Instagram: har_construcciones</div>
+    </div>
   </div>`;
 }
 
@@ -836,7 +851,7 @@ function previsualizarRecibo(){
   const d=recolectarDatos();const alrt=document.getElementById('nr-alert');
   if(!d){alrt.innerHTML='<div class="alert alert-red">Seleccione un contratante.</div>';return;}
   if(!d.valor){alrt.innerHTML='<div class="alert alert-red">Ingrese al menos un valor de pago.</div>';return;}
-  alrt.innerHTML='';htmlParaImprimir=buildRecibo(d);
+  alrt.innerHTML='';htmlParaImprimir=buildRecibo(d);_datosUltimoRecibo=d;
   document.getElementById('preview-content').innerHTML=htmlParaImprimir;
   document.getElementById('modal-preview').classList.add('open');
 }
@@ -866,19 +881,33 @@ async function guardarRecibo(){
   btn.disabled=false;btn.textContent='Guardar y generar PDF';
 }
 
+function getNombrePDF(d){
+  if(!d)return'HAR_Recibo';
+  const consec=(d.consecutivo||'RC').replace(/[^a-zA-Z0-9-]/g,'');
+  const nombre=(d.nombre||'').replace(/[^a-zA-Z0-9 ]/g,'').trim().replace(/ +/g,'_');
+  const obra=(d.obra||'').substring(0,40).replace(/[^a-zA-Z0-9 ]/g,'').trim().replace(/ +/g,'_');
+  return consec+'-'+nombre+'-'+obra;
+}
+let _datosUltimoRecibo=null;
 function imprimirRecibo(){
   const pa=document.getElementById('print-area');pa.style.display='block';pa.innerHTML=htmlParaImprimir;
+  const prevTitle=document.title;
+  if(_datosUltimoRecibo)document.title=getNombrePDF(_datosUltimoRecibo);
   document.querySelectorAll('.no-print').forEach(el=>el.style.display='none');
   window.print();
-  setTimeout(()=>{pa.style.display='none';document.querySelectorAll('.no-print').forEach(el=>el.style.display='');cerrarModal('modal-preview');},600);
+  setTimeout(()=>{pa.style.display='none';document.querySelectorAll('.no-print').forEach(el=>el.style.display='');document.title=prevTitle;cerrarModal('modal-preview');},600);
 }
 function imprimirVer(){
   htmlParaImprimir=document.getElementById('ver-content').innerHTML;
+  // Extraer consecutivo del contenido para el nombre del PDF
+  const m=htmlParaImprimir.match(/CERTIFICADO DE PAGO.*?(RC-\d+)/);
+  const prevTitle=document.title;
+  if(m)document.title=m[1]+'-'+prevTitle;
   document.getElementById('print-area').style.display='block';
   document.getElementById('print-area').innerHTML=htmlParaImprimir;
   document.querySelectorAll('.no-print').forEach(el=>el.style.display='none');
   window.print();
-  setTimeout(()=>{document.getElementById('print-area').style.display='none';document.querySelectorAll('.no-print').forEach(el=>el.style.display='');cerrarModal('modal-ver');},600);
+  setTimeout(()=>{document.getElementById('print-area').style.display='none';document.querySelectorAll('.no-print').forEach(el=>el.style.display='');document.title=prevTitle;cerrarModal('modal-ver');},600);
 }
 
 function renderHistorial(){
