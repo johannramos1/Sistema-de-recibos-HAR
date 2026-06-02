@@ -873,7 +873,7 @@ async function guardarRecibo(){
       adicion_abono:d.adicion?.abono||null,html_recibo:html
     })});
     await loadAll();alrt.innerHTML='<div class="alert alert-green">Recibo guardado.</div>';
-    htmlParaImprimir=html;document.getElementById('preview-content').innerHTML=html;
+    htmlParaImprimir=html;_datosUltimoRecibo=d;document.getElementById('preview-content').innerHTML=html;
     document.getElementById('modal-preview').classList.add('open');
     limpiarNR();renderContratantes();poblarSelectNR();poblarFiltros();
   }catch(e){alrt.innerHTML='<div class="alert alert-red">Error: '+e.message+'</div>';}
