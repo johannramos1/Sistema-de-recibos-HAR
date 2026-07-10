@@ -384,6 +384,21 @@ label{display:block;font-size:11px;font-weight:bold;color:#555;margin:9px 0 3px}
   </div>
 </div>
 
+<!-- MODAL ANULAR -->
+<div id="modal-anular" class="modal-overlay">
+  <div class="modal" style="max-width:460px">
+    <h2 style="color:#7a1a1a">Anular recibo</h2>
+    <div id="an-alert"></div>
+    <div id="an-info"></div>
+    <label>Motivo de la anulación (quedará en el histórico y en la nota)</label>
+    <textarea id="an-motivo" placeholder="Ej: Error en digitación del valor del abono"></textarea>
+    <div style="display:flex;gap:8px;margin-top:18px">
+      <button class="btn-red" id="an-btn" onclick="confirmarAnulacion()">Confirmar anulación</button>
+      <button class="btn-gray" onclick="cerrarModal('modal-anular')">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL PREVIEW -->
 <div id="modal-preview" class="modal-overlay">
   <div class="modal" style="max-width:700px">
@@ -490,7 +505,7 @@ async function renderAdmin(){await loadAll();renderContratantes();poblarSelectNR
 function getSaldos(cid){
   const c=contratantesCache.find(x=>x.id===cid);
   if(!c)return{total:0,pagado:0,saldo:0};
-  const recs=recibosCache.filter(r=>r.contratante_id===cid);
+  const recs=recibosCache.filter(r=>r.contratante_id===cid&&!r.anulado);
   const adiciones=recs.filter(r=>r.es_adicion).reduce((s,r)=>s+(r.valor_adicion||0),0);
   const total=(c.total_contrato||0)+adiciones;
   const pagado=(c.pagado_inicial||0)+recs.reduce((s,r)=>s+(r.valor||0),0);
@@ -499,13 +514,17 @@ function getSaldos(cid){
 function getConsecutivo(cid){
   const c=contratantesCache.find(x=>x.id===cid);
   const base=(c&&c.consecutivo_inicial)?c.consecutivo_inicial:0;
-  const enSistema=recibosCache.filter(r=>r.contratante_id===cid).length;
-  return'RC-'+String(base+enSistema+1).padStart(2,'0');
+  let max=base;
+  recibosCache.filter(r=>r.contratante_id===cid&&!r.anulado).forEach(r=>{
+    const m=String(r.consecutivo||'').match(/(\d+)/);
+    if(m){const n=parseInt(m[1],10);if(n>max)max=n;}
+  });
+  return'RC-'+String(max+1).padStart(2,'0');
 }
 
 // Totales por medio de pago para un contratante
 function getMedioTotales(cid){
-  const recs=recibosCache.filter(r=>r.contratante_id===cid);
+  const recs=recibosCache.filter(r=>r.contratante_id===cid&&!r.anulado);
   return{
     efectivo:recs.reduce((s,r)=>s+(r.monto_efectivo||0),0),
     transferencia:recs.reduce((s,r)=>s+(r.monto_transferencia||0),0),
@@ -611,12 +630,13 @@ function verDetalleContrato(cid){
         if(r.monto_transferencia>0)medios.push(`<span class="medio-badge mb-transferencia">${fmtCOP(r.monto_transferencia)}</span>`);
         if(r.monto_cheque>0)medios.push(`<span class="medio-badge mb-cheque">${fmtCOP(r.monto_cheque)}</span>`);
         if(!medios.length)medios.push(`<span style="font-size:11px;color:#888">${r.medio_pago||'—'}</span>`);
-        return`<div style="display:flex;align-items:center;padding:7px 10px;border-top:1px solid #eee;gap:6px;font-size:12px">
-          <span style="min-width:70px;font-weight:bold;color:#2a5298">${r.consecutivo}</span>
+        const anulado=r.anulado===true;
+        return`<div style="display:flex;align-items:center;padding:7px 10px;border-top:1px solid #eee;gap:6px;font-size:12px${anulado?';background:#fdf5f5':''}">
+          <span style="min-width:70px;font-weight:bold;color:${anulado?'#b02020':'#2a5298'};${anulado?'text-decoration:line-through':''}">${r.consecutivo}${anulado?' <span class="badge badge-red" style="font-size:9px">ANULADO</span>':''}</span>
           <span style="min-width:90px;color:#666">${r.fecha||''}</span>
-          <span style="min-width:110px;font-weight:bold">${fmtCOP(r.valor)}</span>
+          <span style="min-width:110px;font-weight:bold;${anulado?'text-decoration:line-through;color:#999':''}">${fmtCOP(r.valor)}</span>
           <span style="flex:1">${medios.join(' ')}</span>
-          <span style="min-width:110px;text-align:right;color:#1a7a3a;font-weight:bold">${fmtCOP(r.saldo_resultante)}</span>
+          <span style="min-width:110px;text-align:right;color:${anulado?'#999':'#1a7a3a'};font-weight:bold">${anulado?'—':fmtCOP(r.saldo_resultante)}</span>
           <span style="min-width:50px"><button class="btn-blue btn-sm" onclick="verRecibo('${r.id}')">Ver</button></span>
         </div>`;
       }).join(''):'<div style="padding:14px;text-align:center;color:#aaa;font-size:12px">Sin recibos en sistema (puede haber históricos migrados)</div>'}
@@ -899,7 +919,7 @@ function imprimirRecibo(){
 function imprimirVer(){
   htmlParaImprimir=document.getElementById('ver-content').innerHTML;
   // Extraer consecutivo del contenido para el nombre del PDF
-  const m=htmlParaImprimir.match(/CERTIFICADO DE PAGO.*?(RC-\d+)/);
+  const m=htmlParaImprimir.match(/(?:CERTIFICADO DE PAGO|NOTA DE ANULACIÓN).*?((?:RC|AN)-\d+)/);
   const prevTitle=document.title;
   if(m)document.title=m[1]+'-'+prevTitle;
   document.getElementById('print-area').style.display='block';
@@ -937,14 +957,18 @@ function renderHistorial(){
       if((r.monto_transferencia||0)>0)medios.push(`<span class="medio-badge mb-transferencia">${fmtCOP(r.monto_transferencia)}</span>`);
       if((r.monto_cheque||0)>0)medios.push(`<span class="medio-badge mb-cheque">${fmtCOP(r.monto_cheque)}</span>`);
       if(!medios.length)medios.push(`<span style="font-size:11px;color:#888">${r.medio_pago||'—'}</span>`);
-      return`<div class="historial-row">
-        <span style="min-width:75px;font-weight:bold;color:#2a5298">${r.consecutivo}</span>
+      const anulado=r.anulado===true;
+      return`<div class="historial-row"${anulado?' style="background:#fdf5f5"':''}>
+        <span style="min-width:75px;font-weight:bold;color:${anulado?'#b02020':'#2a5298'};${anulado?'text-decoration:line-through':''}">${r.consecutivo}</span>
         <span style="min-width:90px;color:#666">${r.fecha||''}</span>
-        <span style="flex:1;font-size:12px">${c?c.nombre+' · '+(c.anio||''):'—'}</span>
-        <span style="min-width:100px;font-weight:bold">${fmtCOP(r.valor)}</span>
+        <span style="flex:1;font-size:12px">${c?c.nombre+' · '+(c.anio||''):'—'}${anulado?` <span class="badge badge-red" style="font-size:10px">ANULADO ${r.anulacion_consec||''}</span><br><span style="font-size:10px;color:#8a1a1a;font-style:italic">Motivo: ${r.anulado_motivo||'—'}</span>`:''}</span>
+        <span style="min-width:100px;font-weight:bold;${anulado?'text-decoration:line-through;color:#999':''}">${fmtCOP(r.valor)}</span>
         <span style="min-width:180px">${medios.join(' ')}</span>
-        <span style="min-width:110px;text-align:right;color:#1a7a3a;font-weight:bold">${fmtCOP(r.saldo_resultante)}</span>
-        <span style="min-width:50px"><button class="btn-blue btn-sm" onclick="verRecibo('${r.id}')">Ver</button></span>
+        <span style="min-width:110px;text-align:right;color:${anulado?'#999':'#1a7a3a'};font-weight:bold">${anulado?'—':fmtCOP(r.saldo_resultante)}</span>
+        <span style="min-width:120px;display:flex;gap:4px;justify-content:flex-end">
+          <button class="btn-blue btn-sm" onclick="verRecibo('${r.id}')">Ver</button>
+          ${anulado?`<button class="btn-dark btn-sm" onclick="verAnulacion('${r.id}')">Nota</button>`:`<button class="btn-red btn-sm" onclick="abrirAnular('${r.id}')">Anular</button>`}
+        </span>
       </div>`;
     }).join('')+'</div>';
 }
@@ -952,6 +976,93 @@ function renderHistorial(){
 function verHistContratante(id){showTab('tab-historial');document.getElementById('f-contratante').value=id;renderHistorial();}
 function irNuevoRecibo(id){showTab('tab-nuevo-recibo');document.getElementById('nr-contratante').value=id;cargarContratante();}
 function verRecibo(rid){const r=recibosCache.find(x=>x.id===rid);if(!r||!r.html_recibo)return;document.getElementById('ver-content').innerHTML=r.html_recibo;document.getElementById('modal-ver').classList.add('open');}
+function verAnulacion(rid){const r=recibosCache.find(x=>x.id===rid);if(!r||!r.html_anulacion)return;document.getElementById('ver-content').innerHTML=r.html_anulacion;document.getElementById('modal-ver').classList.add('open');}
+
+let _reciboAnular=null;
+function abrirAnular(rid){
+  const r=recibosCache.find(x=>x.id===rid);
+  if(!r)return;
+  const c=contratantesCache.find(x=>x.id===r.contratante_id);
+  _reciboAnular=r;
+  document.getElementById('an-info').innerHTML=`
+    <div style="background:#fdf5f5;border:1px solid #e0a0a0;border-radius:6px;padding:12px;margin-bottom:12px;font-size:12px;line-height:1.7">
+      <strong>Recibo:</strong> ${r.consecutivo} · ${r.fecha||''}<br>
+      <strong>Contratante:</strong> ${c?c.nombre:'—'}<br>
+      <strong>Valor:</strong> ${fmtCOP(r.valor)}<br>
+      <strong>Al anular:</strong> el valor se reintegra al saldo del contrato y el consecutivo ${r.consecutivo} queda disponible si es el último emitido.
+    </div>`;
+  document.getElementById('an-motivo').value='';
+  document.getElementById('an-alert').innerHTML='';
+  document.getElementById('modal-anular').classList.add('open');
+  setTimeout(()=>document.getElementById('an-motivo').focus(),100);
+}
+
+function buildAnulacion(r,c,motivo,anConsec,fechaAn,saldoRestaurado){
+  return`<div class="recibo-doc">
+    <div class="rec-head">
+      <div class="rec-head-left"><img src="${LOGO_B64}" class="rec-logo"><div class="rec-empresa-block"><div class="nombre">H.A.R CONSTRUCCIONES Y REFORMAS</div><div class="nit">NIT. 94.154.479-7</div></div></div>
+      <div class="rec-head-right">${getFechaTexto(fechaAn)}</div>
+    </div>
+    <div class="rec-titulo" style="background:#7a1a1a">NOTA DE ANULACIÓN &nbsp;–&nbsp; ${anConsec}</div>
+    <div class="rec-cuerpo-wrap"><div class="rec-cuerpo">
+      Por medio del presente documento se deja constancia de la <strong>ANULACIÓN</strong> del certificado de pago
+      <strong>${r.consecutivo}</strong>, de fecha <strong>${getFechaTexto(r.fecha)}</strong>, emitido a nombre de
+      <strong>${c?c.nombre:''}</strong>, identificado con la cédula de ciudadanía número <strong>${c?c.cedula:''}</strong>,
+      por valor de <strong>($${fmtNum(r.valor)}=) ${numLetras(r.valor)}</strong>, correspondiente a la obra
+      <strong>${c?c.obra:''}</strong>.
+    </div>
+    <div class="rec-adicion" style="border-left-color:#7a1a1a;background:#fdf0f0">
+      <div class="rec-adicion-titulo" style="color:#7a1a1a">Motivo de anulación</div>
+      <p>${motivo}</p>
+    </div>
+    <div class="rec-cuerpo">
+      En consecuencia, el valor del recibo anulado se reintegra al saldo del contrato, quedando el saldo en
+      <strong>($${fmtNum(saldoRestaurado)}=) ${numLetras(saldoRestaurado)}</strong>.
+      El consecutivo del certificado anulado queda sin efecto legal ni contable.
+    </div></div>
+    <div style="margin-top:28px">
+    <p>Cordialmente,</p>
+    <div class="rec-firma-section"><div class="rec-firma-block">
+      <img src="${FIRMA_B64}" class="rec-firma-img">
+      <div class="rec-firma-linea"></div>
+      <div class="rec-firma-nombre">HAZEL ADRIAN RAMOS CUELLAR</div>
+      <div class="rec-firma-cargo">C.C. 94.154.479</div>
+      <div class="rec-firma-cargo">Gerente · H.A.R Construcciones y Reformas · NIT. 94.154.479-7</div>
+    </div></div>
+    <div class="rec-pie">Barrio Ciudad Campestre, casa E11 – Tuluá, Valle Del Cauca &nbsp;·&nbsp; Tel: 317-851-9215<br>Hazelram683@gmail.com &nbsp;·&nbsp; Facebook: H A R Construcciones y Reformas &nbsp;·&nbsp; Instagram: har_construcciones</div>
+    </div>
+  </div>`;
+}
+
+async function confirmarAnulacion(){
+  const motivo=document.getElementById('an-motivo').value.trim();
+  const alrt=document.getElementById('an-alert');
+  if(!motivo){alrt.innerHTML='<div class="alert alert-red">Escriba el motivo de la anulación.</div>';return;}
+  if(!_reciboAnular)return;
+  const r=_reciboAnular;
+  const c=contratantesCache.find(x=>x.id===r.contratante_id);
+  const numAn=recibosCache.filter(x=>x.contratante_id===r.contratante_id&&x.anulado).length+1;
+  const anConsec='AN-'+String(numAn).padStart(2,'0');
+  const fechaAn=new Date().toISOString().split('T')[0];
+  const{saldo}=getSaldos(r.contratante_id);
+  const saldoRestaurado=saldo+(r.valor||0);
+  const htmlAn=buildAnulacion(r,c,motivo,anConsec,fechaAn,saldoRestaurado);
+  const btn=document.getElementById('an-btn');
+  btn.disabled=true;btn.textContent='Anulando...';
+  try{
+    await sbFetch('recibos?id=eq.'+r.id,{method:'PATCH',body:JSON.stringify({
+      anulado:true,anulado_motivo:motivo,anulado_fecha:fechaAn,
+      anulacion_consec:anConsec,html_anulacion:htmlAn
+    })});
+    await loadAll();
+    cerrarModal('modal-anular');
+    renderHistorial();renderContratantes();poblarSelectNR();
+    document.getElementById('ver-content').innerHTML=htmlAn;
+    document.getElementById('modal-ver').classList.add('open');
+  }catch(e){alrt.innerHTML='<div class="alert alert-red">Error: '+e.message+'</div>';}
+  btn.disabled=false;btn.textContent='Confirmar anulación';
+  _reciboAnular=null;
+}
 
 async function renderGerente(){await loadAll();poblarFiltros();renderGerenteSaldos();renderGerenteHistorial();}
 function renderGerenteSaldos(){
@@ -1006,14 +1117,18 @@ function renderGerenteHistorial(){
     if((r.monto_transferencia||0)>0)medios.push(`<span class="medio-badge mb-transferencia">${fmtCOP(r.monto_transferencia)}</span>`);
     if((r.monto_cheque||0)>0)medios.push(`<span class="medio-badge mb-cheque">${fmtCOP(r.monto_cheque)}</span>`);
     if(!medios.length)medios.push(`<span style="font-size:11px;color:#888">${r.medio_pago||'—'}</span>`);
-    return`<div class="historial-row">
-      <span style="min-width:75px;font-weight:bold;color:#2a5298">${r.consecutivo}</span>
+    const anulado=r.anulado===true;
+    return`<div class="historial-row"${anulado?' style="background:#fdf5f5"':''}>
+      <span style="min-width:75px;font-weight:bold;color:${anulado?'#b02020':'#2a5298'};${anulado?'text-decoration:line-through':''}">${r.consecutivo}</span>
       <span style="min-width:90px;color:#666">${r.fecha||''}</span>
-      <span style="flex:1;font-size:12px">${c?c.nombre+' · '+(c.anio||''):'—'}</span>
-      <span style="min-width:100px;font-weight:bold">${fmtCOP(r.valor)}</span>
+      <span style="flex:1;font-size:12px">${c?c.nombre+' · '+(c.anio||''):'—'}${anulado?` <span class="badge badge-red" style="font-size:10px">ANULADO ${r.anulacion_consec||''}</span><br><span style="font-size:10px;color:#8a1a1a;font-style:italic">Motivo: ${r.anulado_motivo||'—'}</span>`:''}</span>
+      <span style="min-width:100px;font-weight:bold;${anulado?'text-decoration:line-through;color:#999':''}">${fmtCOP(r.valor)}</span>
       <span style="min-width:180px">${medios.join(' ')}</span>
-      <span style="min-width:110px;text-align:right;color:#1a7a3a;font-weight:bold">${fmtCOP(r.saldo_resultante)}</span>
-      <span style="min-width:50px"><button class="btn-blue btn-sm" onclick="verRecibo('${r.id}')">Ver</button></span>
+      <span style="min-width:110px;text-align:right;color:${anulado?'#999':'#1a7a3a'};font-weight:bold">${anulado?'—':fmtCOP(r.saldo_resultante)}</span>
+      <span style="min-width:100px;display:flex;gap:4px;justify-content:flex-end">
+        <button class="btn-blue btn-sm" onclick="verRecibo('${r.id}')">Ver</button>
+        ${anulado?`<button class="btn-dark btn-sm" onclick="verAnulacion('${r.id}')">Nota</button>`:''}
+      </span>
     </div>`;
   }).join('')+'</div>';
 }
